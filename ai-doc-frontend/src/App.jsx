@@ -3,19 +3,21 @@ import "./App.css";
 import Login from "./modules/Login/components/Login";
 import Register from "./modules/Login/components/Register";
 import MainPage from "./modules/Document/MainPage";
+import ComparePage from "./modules/Compare/ComparePage";
 
 function App() {
   return (
     <>
       <Routes>
-        <Route 
-          path="/login" 
+        <Route
+          path="/login"
           element={
               <Login />
-          } 
+          }
         />
         <Route path="/register" element={<Register />} />
         <Route path="/main" element={<MainPage />} />
+        <Route path="/compare" element={<ComparePage />} />
         <Route path="*" element={<Login />} />
       </Routes>
     </>
