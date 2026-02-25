@@ -25,6 +25,7 @@ import dotenv
 # Import custom modules
 from utils.pdf_extractor import extract_pdf_text
 from utils.excel_exporter import export_to_excel
+from utils.comparison_engine import compare_documents
 from parsers.factory import ParserFactory
 from models import User
 
@@ -473,6 +474,156 @@ def parse_json():
     except Exception as e:
         logger.error(f"Parse JSON error: {e}", exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ==================== DOCUMENT COMPARISON ====================
+
+@app.route('/compare', methods=['POST'])
+@login_required
+def compare_files():
+    """
+    Compare two PDF documents using AI embeddings.
+    Expects: multipart form with 'file_a' and 'file_b' PDF uploads.
+    Returns: JSON with detailed comparison results including matches,
+             modifications, and missing sections.
+    """
+    logger.info("Received document comparison request")
+
+    # Validate both files are present
+    if 'file_a' not in request.files or 'file_b' not in request.files:
+        return jsonify({
+            'success': False,
+            'error': 'Two PDF files are required (file_a and file_b)'
+        }), 400
+
+    file_a = request.files['file_a']
+    file_b = request.files['file_b']
+
+    if file_a.filename == '' or file_b.filename == '':
+        return jsonify({'success': False, 'error': 'Both files must be selected'}), 400
+
+    if not allowed_file(file_a.filename) or not allowed_file(file_b.filename):
+        return jsonify({'success': False, 'error': 'Only PDF files are allowed'}), 400
+
+    file_path_a = None
+    file_path_b = None
+
+    try:
+        # Save both files
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        name_a = secure_filename(file_a.filename)
+        unique_a = f"{timestamp}_cmp_a_{name_a}"
+        file_path_a = os.path.join(app.config['UPLOAD_FOLDER'], unique_a)
+        file_a.save(file_path_a)
+
+        name_b = secure_filename(file_b.filename)
+        unique_b = f"{timestamp}_cmp_b_{name_b}"
+        file_path_b = os.path.join(app.config['UPLOAD_FOLDER'], unique_b)
+        file_b.save(file_path_b)
+
+        logger.info(f"Saved comparison files: {unique_a}, {unique_b}")
+
+        # Extract text from both PDFs
+        text_a, method_a = extract_pdf_text(file_path_a)
+        text_b, method_b = extract_pdf_text(file_path_b)
+
+        if not text_a or len(text_a.strip()) < 10:
+            return jsonify({
+                'success': False,
+                'error': f'Could not extract text from {name_a}. File may be empty or corrupted.'
+            }), 400
+
+        if not text_b or len(text_b.strip()) < 10:
+            return jsonify({
+                'success': False,
+                'error': f'Could not extract text from {name_b}. File may be empty or corrupted.'
+            }), 400
+
+        logger.info(
+            f"Extracted text - A: {len(text_a)} chars ({method_a}), "
+            f"B: {len(text_b)} chars ({method_b})"
+        )
+
+        # Run comparison engine
+        result = compare_documents(
+            text_a=text_a,
+            text_b=text_b,
+            name_a=file_a.filename,
+            name_b=file_b.filename,
+        )
+
+        # Save comparison to MongoDB
+        comparison_doc = {
+            'user_id': ObjectId(current_user.id),
+            'document_a': file_a.filename,
+            'document_b': file_b.filename,
+            'file_a': unique_a,
+            'file_b': unique_b,
+            'extraction_method_a': method_a,
+            'extraction_method_b': method_b,
+            'summary': result.get('summary', {}),
+            'embedding_method': result.get('embedding_method', 'unknown'),
+            'processing_time': result.get('processing_time_seconds', 0),
+            'created_at': datetime.utcnow(),
+        }
+        inserted = mongo.db.comparisons.insert_one(comparison_doc)
+        result['comparison_id'] = str(inserted.inserted_id)
+
+        logger.info(f"Comparison saved with ID: {result['comparison_id']}")
+        return jsonify(result), 200
+
+    except RequestEntityTooLarge:
+        return jsonify({'success': False, 'error': 'File size exceeds limit (max 50 MB)'}), 413
+
+    except Exception as e:
+        logger.error(f"Comparison error: {e}", exc_info=True)
+        return jsonify({'success': False, 'error': f'Comparison failed: {str(e)}'}), 500
+
+
+@app.route('/api/comparisons', methods=['GET'])
+@login_required
+def list_comparisons():
+    """List all comparisons for the current user."""
+    try:
+        comparisons = list(mongo.db.comparisons.find(
+            {'user_id': ObjectId(current_user.id)}
+        ).sort('created_at', -1))
+
+        for comp in comparisons:
+            comp['_id'] = str(comp['_id'])
+            comp['user_id'] = str(comp['user_id'])
+            comp['created_at'] = comp['created_at'].isoformat() if comp.get('created_at') else None
+
+        return jsonify({'comparisons': comparisons}), 200
+
+    except Exception as e:
+        logger.error(f"Error listing comparisons: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to list comparisons'}), 500
+
+
+@app.route('/api/comparisons/<comparison_id>', methods=['GET'])
+@login_required
+def get_comparison(comparison_id: str):
+    """Get a specific comparison result by ID."""
+    try:
+        comp = mongo.db.comparisons.find_one({
+            '_id': ObjectId(comparison_id),
+            'user_id': ObjectId(current_user.id),
+        })
+
+        if not comp:
+            return jsonify({'error': 'Comparison not found'}), 404
+
+        comp['_id'] = str(comp['_id'])
+        comp['user_id'] = str(comp['user_id'])
+        comp['created_at'] = comp['created_at'].isoformat() if comp.get('created_at') else None
+
+        return jsonify(comp), 200
+
+    except Exception as e:
+        logger.error(f"Error fetching comparison: {e}", exc_info=True)
+        return jsonify({'error': 'Failed to fetch comparison'}), 500
 
 
 # ==================== ERROR HANDLERS ====================

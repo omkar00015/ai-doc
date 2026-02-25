@@ -26,11 +26,14 @@ import {
   InsertDriveFile,
   CloudUpload,
   Download,
+  CompareArrows,
 } from "@mui/icons-material";
 import { useAuth } from "../../auth/AuthProvider";
+import { useNavigate } from "react-router-dom";
 
 export default function MainPage() {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const [documents, setDocuments] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState("");
@@ -131,6 +134,20 @@ export default function MainPage() {
           <Typography variant="h6" sx={{ flexGrow: 1 }}>
             AI Bank Statement Analyzer
           </Typography>
+          <Button
+            variant="outlined"
+            startIcon={<CompareArrows />}
+            onClick={() => navigate("/compare")}
+            sx={{
+              color: "white",
+              borderColor: "rgba(255,255,255,0.5)",
+              textTransform: "none",
+              mr: 2,
+              "&:hover": { borderColor: "white", bgcolor: "rgba(255,255,255,0.1)" },
+            }}
+          >
+            Compare Docs
+          </Button>
           <Typography variant="body2" sx={{ mr: 2 }}>
             {user?.email}
           </Typography>
